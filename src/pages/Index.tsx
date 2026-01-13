@@ -1,26 +1,57 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { GRADES, CLASS_NUMBERS } from '@/types/assessment';
 import { BookOpen, Calendar } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function Index() {
   const navigate = useNavigate();
   const [grade, setGrade] = useState<number | null>(null);
   const [classNumber, setClassNumber] = useState<number | null>(null);
+  const [isNavigating, setIsNavigating] = useState(false);
 
-  const handleSubmit = (e?: React.FormEvent) => {
+  useEffect(() => {
+    console.log('Index page mounted');
+    console.log('User Agent:', navigator.userAgent);
+  }, []);
+
+  const handleSubmit = async (e?: React.FormEvent) => {
     if (e) {
       e.preventDefault();
+      e.stopPropagation();
     }
     
-    if (grade && classNumber) {
-      console.log('Navigating with:', { grade, classNumber });
-      navigate(`/calendar?grade=${grade}&class=${classNumber}`);
-    } else {
-      console.log('Missing values:', { grade, classNumber });
+    console.log('Submit triggered', { grade, classNumber, isNavigating });
+    
+    if (isNavigating) {
+      console.log('Already navigating, skipping...');
+      return;
+    }
+    
+    if (!grade || !classNumber) {
+      console.error('Missing values:', { grade, classNumber });
+      toast.error('학년과 반을 모두 선택해주세요');
+      return;
+    }
+
+    try {
+      setIsNavigating(true);
+      console.log('Starting navigation to:', `/calendar?grade=${grade}&class=${classNumber}`);
+      
+      // 모바일에서 더 안정적인 네비게이션을 위해 setTimeout 사용
+      setTimeout(() => {
+        navigate(`/calendar?grade=${grade}&class=${classNumber}`, { replace: false });
+        console.log('Navigation called');
+      }, 100);
+      
+      toast.success('페이지 이동 중...');
+    } catch (error) {
+      console.error('Navigation error:', error);
+      toast.error('페이지 이동 중 오류가 발생했습니다');
+      setIsNavigating(false);
     }
   };
 
@@ -28,13 +59,17 @@ export default function Index() {
     const gradeNum = Number(value);
     console.log('Grade selected:', gradeNum);
     setGrade(gradeNum);
+    toast.success(`${gradeNum}학년 선택됨`);
   };
 
   const handleClassChange = (value: string) => {
     const classNum = Number(value);
     console.log('Class selected:', classNum);
     setClassNumber(classNum);
+    toast.success(`${classNum}반 선택됨`);
   };
+
+  const isButtonDisabled = !grade || !classNumber || isNavigating;
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-4 sm:p-6">
@@ -65,8 +100,12 @@ export default function Index() {
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="space-y-2">
                 <label className="text-sm font-medium block">학년</label>
-                <Select onValueChange={handleGradeChange} value={grade?.toString()}>
-                  <SelectTrigger className="w-full touch-manipulation">
+                <Select 
+                  onValueChange={handleGradeChange} 
+                  value={grade?.toString()}
+                  disabled={isNavigating}
+                >
+                  <SelectTrigger className="w-full touch-manipulation min-h-[44px]">
                     <SelectValue placeholder="학년을 선택하세요" />
                   </SelectTrigger>
                   <SelectContent>
@@ -81,8 +120,12 @@ export default function Index() {
 
               <div className="space-y-2">
                 <label className="text-sm font-medium block">반</label>
-                <Select onValueChange={handleClassChange} value={classNumber?.toString()}>
-                  <SelectTrigger className="w-full touch-manipulation">
+                <Select 
+                  onValueChange={handleClassChange} 
+                  value={classNumber?.toString()}
+                  disabled={isNavigating}
+                >
+                  <SelectTrigger className="w-full touch-manipulation min-h-[44px]">
                     <SelectValue placeholder="반을 선택하세요" />
                   </SelectTrigger>
                   <SelectContent>
@@ -97,12 +140,22 @@ export default function Index() {
 
               <Button
                 type="submit"
-                disabled={!grade || !classNumber}
-                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 touch-manipulation"
+                disabled={isButtonDisabled}
+                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 touch-manipulation min-h-[48px] text-base"
                 size="lg"
+                onClick={handleSubmit}
               >
-                일정 확인하기
+                {isNavigating ? '이동 중...' : '일정 확인하기'}
               </Button>
+              
+              {/* 디버깅 정보 표시 (개발 중에만 표시) */}
+              {process.env.NODE_ENV === 'development' && (
+                <div className="text-xs text-gray-500 mt-2 p-2 bg-gray-100 rounded">
+                  <div>선택된 학년: {grade || '없음'}</div>
+                  <div>선택된 반: {classNumber || '없음'}</div>
+                  <div>버튼 활성화: {!isButtonDisabled ? '예' : '아니오'}</div>
+                </div>
+              )}
             </form>
           </CardContent>
         </Card>
@@ -111,7 +164,8 @@ export default function Index() {
           <Button
             variant="link"
             onClick={() => navigate('/admin')}
-            className="text-muted-foreground hover:text-foreground touch-manipulation"
+            className="text-muted-foreground hover:text-foreground touch-manipulation min-h-[44px]"
+            disabled={isNavigating}
           >
             관리자 페이지로 이동
           </Button>
