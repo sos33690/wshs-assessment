@@ -1,8 +1,13 @@
 import { Assessment } from '@/types/assessment';
 
+// 브라우저 알림 지원 여부 확인
+export const isNotificationSupported = (): boolean => {
+  return 'Notification' in window;
+};
+
 // 브라우저 알림 권한 요청
 export const requestNotificationPermission = async (): Promise<boolean> => {
-  if (!('Notification' in window)) {
+  if (!isNotificationSupported()) {
     console.log('이 브라우저는 알림을 지원하지 않습니다');
     return false;
   }
@@ -19,9 +24,12 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
   return false;
 };
 
+// 이미 스케줄된 알림 추적 (중복 방지)
+const scheduledNotifications = new Set<string>();
+
 // 수행평가 알림 스케줄링
 export const scheduleNotification = (assessment: Assessment): void => {
-  if (Notification.permission !== 'granted') {
+  if (!isNotificationSupported() || Notification.permission !== 'granted') {
     return;
   }
 
@@ -45,18 +53,36 @@ export const scheduleNotification = (assessment: Assessment): void => {
     sameDay.setHours(7, 0, 0, 0); // 오전 7시
 
     const scheduleTime = (notificationDate: Date, daysText: string) => {
+      const notificationKey = `${assessment.id}-${daysText}`;
+      
+      // 이미 스케줄된 알림은 건너뛰기
+      if (scheduledNotifications.has(notificationKey)) {
+        return;
+      }
+      
       const timeUntilNotification = notificationDate.getTime() - now.getTime();
       
       if (timeUntilNotification > 0) {
+        scheduledNotifications.add(notificationKey);
+        
         setTimeout(() => {
-          new Notification('수행평가 알림', {
-            body: `${daysText} ${assessment.subject} 수행평가가 있습니다.\n${assessment.description || ''}`,
-            icon: '/favicon.svg',
-            badge: '/favicon.svg',
-            tag: `assessment-${assessment.id}-${daysText}`,
-            requireInteraction: false
-          });
+          try {
+            new Notification('📚 수행평가 알림', {
+              body: `${daysText} ${assessment.subject} 수행평가가 있습니다!\n${assessment.description || ''}\n📅 ${assessment.date}`,
+              icon: '/images/Notification.jpg',
+              badge: '/images/Notification.jpg',
+              tag: `assessment-${notificationKey}`,
+              requireInteraction: true,
+            });
+          } catch (error) {
+            console.error('알림 전송 실패:', error);
+          }
+          
+          // 전송 후 Set에서 제거
+          scheduledNotifications.delete(notificationKey);
         }, timeUntilNotification);
+        
+        console.log(`알림 스케줄됨: ${assessment.subject} - ${daysText} (${Math.round(timeUntilNotification / 1000 / 60)}분 후)`);
       }
     };
 
@@ -68,11 +94,21 @@ export const scheduleNotification = (assessment: Assessment): void => {
 
 // 즉시 테스트 알림 보내기
 export const sendTestNotification = (): void => {
+  if (!isNotificationSupported()) {
+    console.log('이 브라우저는 알림을 지원하지 않습니다');
+    return;
+  }
+  
   if (Notification.permission === 'granted') {
-    new Notification('수행평가 알림 테스트', {
-      body: '알림이 정상적으로 작동합니다!',
-      icon: '/favicon.svg',
-      badge: '/favicon.svg'
-    });
+    try {
+      new Notification('📚 수행평가 알림 테스트', {
+        body: '알림이 정상적으로 작동합니다! 🎉\n수행평가 3일 전, 1일 전, 당일에 알림을 받게 됩니다.',
+        icon: '/images/Notification.jpg',
+        badge: '/images/Notification.jpg',
+        requireInteraction: false,
+      });
+    } catch (error) {
+      console.error('테스트 알림 전송 실패:', error);
+    }
   }
 };

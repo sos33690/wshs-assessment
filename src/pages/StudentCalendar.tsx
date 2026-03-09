@@ -1,18 +1,18 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Calendar } from '@/components/ui/calendar';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
 import { Assessment } from '@/types/assessment';
 import { getAssessmentsByClass } from '@/lib/firebaseStorage';
-import { requestNotificationPermission, scheduleNotification } from '@/lib/notification';
-import { ChevronLeft, Bell, BellOff } from 'lucide-react';
+import { requestNotificationPermission, scheduleNotification, sendTestNotification } from '@/lib/notification';
+import { ChevronLeft, Bell, BellOff, CheckCircle2, Clock, BellRing, ChevronDown } from 'lucide-react';
 import { ko } from 'date-fns/locale';
 
 export default function StudentCalendar() {
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const grade = parseInt(searchParams.get('grade') || '1');
   const classNumber = parseInt(searchParams.get('class') || '1');
@@ -21,6 +21,7 @@ export default function StudentCalendar() {
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [completedOpen, setCompletedOpen] = useState(false);
 
   useEffect(() => {
     loadAssessments();
@@ -32,14 +33,13 @@ export default function StudentCalendar() {
     try {
       const data = await getAssessmentsByClass(grade, classNumber);
       setAssessments(data);
-      
-      // 알림이 활성화되어 있으면 새로운 수행평가에 대한 알림 스케줄링
-      if (Notification.permission === 'granted') {
-        data.forEach(assessment => {
+
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        data.forEach((assessment) => {
           scheduleNotification(assessment);
         });
       }
-    } catch (error) {
+    } catch {
       toast.error('데이터를 불러오는데 실패했습니다');
     } finally {
       setLoading(false);
@@ -47,121 +47,264 @@ export default function StudentCalendar() {
   };
 
   const checkNotificationPermission = () => {
-    setNotificationsEnabled(Notification.permission === 'granted');
+    if (typeof Notification !== 'undefined') {
+      setNotificationsEnabled(Notification.permission === 'granted');
+    }
   };
 
   const handleEnableNotifications = async () => {
     const granted = await requestNotificationPermission();
     if (granted) {
       setNotificationsEnabled(true);
-      assessments.forEach(assessment => {
+      assessments.forEach((assessment) => {
         scheduleNotification(assessment);
       });
-      toast.success('알림이 활성화되었습니다');
+      toast.success('알림이 활성화되었습니다! 이 페이지를 열어둔 상태에서 알림이 전송됩니다.');
     } else {
-      toast.error('알림 권한이 거부되었습니다');
+      toast.error('알림 권한이 거부되었습니다. 브라우저 설정에서 알림을 허용해주세요.');
     }
+  };
+
+  const handleTestNotification = () => {
+    sendTestNotification();
+    toast.success('테스트 알림을 전송했습니다!');
+  };
+
+  const isPastDate = (dateStr: string): boolean => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const assessmentDate = new Date(dateStr);
+    assessmentDate.setHours(0, 0, 0, 0);
+    return assessmentDate < today;
+  };
+
+  const isToday = (dateStr: string): boolean => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const assessmentDate = new Date(dateStr);
+    assessmentDate.setHours(0, 0, 0, 0);
+    return assessmentDate.getTime() === today.getTime();
   };
 
   const getAssessmentsForDate = (date: Date) => {
     const dateStr = date.toISOString().split('T')[0];
-    return assessments.filter(a => a.date === dateStr);
+    return assessments.filter((a) => a.date === dateStr);
   };
 
+  const upcomingAssessments = assessments.filter((a) => !isPastDate(a.date));
+  const completedAssessments = assessments.filter((a) => isPastDate(a.date));
   const selectedDateAssessments = selectedDate ? getAssessmentsForDate(selectedDate) : [];
 
-  const assessmentDates = assessments.map(a => new Date(a.date));
+  const upcomingDates = upcomingAssessments.map((a) => new Date(a.date));
+  const completedDates = completedAssessments.map((a) => new Date(a.date));
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-4 md:p-8">
-      <div className="max-w-6xl mx-auto space-y-6">
-        <div className="flex items-center justify-between">
-          <Button variant="outline" onClick={() => navigate('/')}>
-            <ChevronLeft className="w-4 h-4 mr-2" />
-            돌아가기
-          </Button>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
+      {/* Sticky mobile header */}
+      <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-md border-b border-gray-200/60 px-3 py-2.5 sm:px-6 sm:py-3 md:px-8">
+        <div className="max-w-6xl mx-auto flex items-center justify-between gap-2">
           <Button
-            variant={notificationsEnabled ? 'outline' : 'default'}
-            onClick={handleEnableNotifications}
-            disabled={notificationsEnabled}
+            variant="ghost"
+            size="sm"
+            className="touch-manipulation -ml-2 px-2"
+            onClick={() => {
+              window.location.href = '/';
+            }}
           >
-            {notificationsEnabled ? (
-              <>
-                <Bell className="w-4 h-4 mr-2" />
-                알림 활성화됨
-              </>
-            ) : (
-              <>
-                <BellOff className="w-4 h-4 mr-2" />
-                알림 활성화
-              </>
-            )}
+            <ChevronLeft className="w-4 h-4 mr-1" />
+            <span className="hidden sm:inline">돌아가기</span>
           </Button>
-        </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{grade}학년 {classNumber}반 수행평가 일정</CardTitle>
-            <CardDescription>
-              {loading ? '데이터를 불러오는 중...' : `총 ${assessments.length}개의 수행평가가 예정되어 있습니다`}
+          <h1 className="text-sm sm:text-base font-semibold text-gray-800 truncate">
+            {grade}학년 {classNumber}반
+          </h1>
+
+          <div className="flex items-center gap-1.5">
+            {notificationsEnabled && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="touch-manipulation px-2"
+                onClick={handleTestNotification}
+              >
+                <BellRing className="w-4 h-4" />
+                <span className="hidden sm:inline ml-1.5">테스트</span>
+              </Button>
+            )}
+            <Button
+              variant={notificationsEnabled ? 'ghost' : 'default'}
+              size="sm"
+              className="touch-manipulation px-2 sm:px-3"
+              onClick={handleEnableNotifications}
+              disabled={notificationsEnabled}
+            >
+              {notificationsEnabled ? (
+                <>
+                  <Bell className="w-4 h-4" />
+                  <span className="hidden sm:inline ml-1.5">알림 ON</span>
+                </>
+              ) : (
+                <>
+                  <BellOff className="w-4 h-4" />
+                  <span className="hidden sm:inline ml-1.5">알림 활성화</span>
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto px-3 py-4 sm:px-6 sm:py-6 md:px-8 space-y-4 sm:space-y-6">
+        {/* 알림 안내 카드 */}
+        {notificationsEnabled && (
+          <Card className="border-green-200 bg-green-50 shadow-sm">
+            <CardContent className="pt-3 pb-3 px-3 sm:pt-4 sm:pb-4 sm:px-6">
+              <div className="flex items-start gap-2.5">
+                <Bell className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
+                <div className="text-xs sm:text-sm text-green-800 min-w-0">
+                  <p className="font-semibold mb-1">🔔 알림이 활성화되었습니다!</p>
+                  <ul className="list-disc list-inside space-y-0.5 text-green-700 text-[11px] sm:text-sm">
+                    <li>
+                      수행평가 <strong>3일 전</strong> 알림
+                    </li>
+                    <li>
+                      수행평가 <strong>1일 전</strong> 알림
+                    </li>
+                    <li>
+                      수행평가 <strong>당일</strong> 알림
+                    </li>
+                  </ul>
+                  <p className="mt-1.5 text-[10px] sm:text-xs text-green-600">
+                    ⚠️ 이 페이지를 열어둔 상태에서만 알림이 작동합니다.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* 캘린더 + 선택된 날짜 수행평가 */}
+        <Card className="shadow-sm overflow-hidden">
+          <CardHeader className="px-3 py-3 sm:px-6 sm:py-4">
+            <CardTitle className="text-base sm:text-lg">수행평가 일정</CardTitle>
+            <CardDescription className="text-xs sm:text-sm">
+              {loading ? (
+                '데이터를 불러오는 중...'
+              ) : (
+                <>
+                  예정 <strong>{upcomingAssessments.length}개</strong>
+                  {completedAssessments.length > 0 && (
+                    <>
+                      {' '}
+                      · 완료 <strong>{completedAssessments.length}개</strong>
+                    </>
+                  )}
+                </>
+              )}
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="grid md:grid-cols-2 gap-6">
+          <CardContent className="px-2 pb-4 sm:px-6 sm:pb-6">
+            <div className="flex flex-col md:grid md:grid-cols-2 gap-4 sm:gap-6">
+              {/* 캘린더 영역 */}
               <div>
                 <Calendar
                   mode="single"
                   selected={selectedDate}
                   onSelect={setSelectedDate}
                   locale={ko}
-                  className="rounded-md border"
+                  className="rounded-md border w-full"
                   modifiers={{
-                    assessment: assessmentDates
+                    upcoming: upcomingDates,
+                    completed: completedDates,
                   }}
                   modifiersStyles={{
-                    assessment: {
+                    upcoming: {
                       fontWeight: 'bold',
                       textDecoration: 'underline',
-                      color: '#3b82f6'
-                    }
+                      color: '#3b82f6',
+                    },
+                    completed: {
+                      fontWeight: 'bold',
+                      color: '#22c55e',
+                      textDecoration: 'line-through',
+                    },
                   }}
                 />
+                <div className="mt-2 flex items-center justify-center gap-4 text-[11px] sm:text-xs text-gray-500">
+                  <div className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block" />
+                    <span>예정</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" />
+                    <span>완료</span>
+                  </div>
+                </div>
               </div>
 
-              <div className="space-y-4">
-                <h3 className="font-semibold text-lg">
-                  {selectedDate ? selectedDate.toLocaleDateString('ko-KR', { 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric' 
-                  }) : '날짜를 선택하세요'}
+              {/* 선택된 날짜의 수행평가 */}
+              <div className="space-y-3">
+                <h3 className="font-semibold text-sm sm:text-lg px-1">
+                  {selectedDate
+                    ? selectedDate.toLocaleDateString('ko-KR', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                      })
+                    : '날짜를 선택하세요'}
                 </h3>
 
                 {loading ? (
-                  <div className="text-center py-8 text-gray-500">데이터를 불러오는 중...</div>
+                  <div className="text-center py-6 text-gray-500 text-sm">데이터를 불러오는 중...</div>
                 ) : selectedDateAssessments.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
+                  <div className="text-center py-6 text-gray-400 text-sm">
                     이 날짜에는 수행평가가 없습니다
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {selectedDateAssessments.map((assessment) => (
-                      <Card key={assessment.id}>
-                        <CardContent className="pt-6">
-                          <div className="flex items-start justify-between">
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <Badge>{assessment.subject}</Badge>
-                                <span className="text-sm text-gray-500">
-                                  {assessment.grade}학년 {assessment.classNumber}반
-                                </span>
-                              </div>
-                              <p className="text-sm text-gray-700">{assessment.description}</p>
+                  <div className="space-y-2">
+                    {selectedDateAssessments.map((assessment) => {
+                      const past = isPastDate(assessment.date);
+                      const today = isToday(assessment.date);
+                      return (
+                        <Card
+                          key={assessment.id}
+                          className={`transition-colors ${
+                            past
+                              ? 'opacity-70 border-green-200 bg-green-50/50'
+                              : today
+                                ? 'border-orange-200 bg-orange-50/50'
+                                : ''
+                          }`}
+                        >
+                          <CardContent className="p-3 sm:pt-5 sm:pb-4 sm:px-5">
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <Badge className="text-[11px] sm:text-xs">{assessment.subject}</Badge>
+                              {past && (
+                                <Badge
+                                  variant="secondary"
+                                  className="bg-green-100 text-green-700 border-green-300 text-[11px] sm:text-xs"
+                                >
+                                  <CheckCircle2 className="w-3 h-3 mr-0.5" />
+                                  완료
+                                </Badge>
+                              )}
+                              {today && (
+                                <Badge
+                                  variant="secondary"
+                                  className="bg-orange-100 text-orange-700 border-orange-300 text-[11px] sm:text-xs"
+                                >
+                                  <Clock className="w-3 h-3 mr-0.5" />
+                                  오늘
+                                </Badge>
+                              )}
                             </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
+                            <p className="text-xs sm:text-sm text-gray-700 leading-relaxed">
+                              {assessment.description}
+                            </p>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -169,42 +312,141 @@ export default function StudentCalendar() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>전체 수행평가 목록</CardTitle>
+        {/* 예정된 수행평가 목록 */}
+        <Card className="shadow-sm">
+          <CardHeader className="px-3 py-3 sm:px-6 sm:py-4">
+            <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+              <Clock className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
+              예정된 수행평가
+            </CardTitle>
+            <CardDescription className="text-xs sm:text-sm">
+              아직 완료되지 않은 수행평가 목록입니다
+            </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-3 pb-3 sm:px-6 sm:pb-6">
             {loading ? (
-              <div className="text-center py-8 text-gray-500">데이터를 불러오는 중...</div>
-            ) : assessments.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                아직 등록된 수행평가가 없습니다
-              </div>
+              <div className="text-center py-6 text-gray-500 text-sm">데이터를 불러오는 중...</div>
+            ) : upcomingAssessments.length === 0 ? (
+              <div className="text-center py-6 text-gray-400 text-sm">예정된 수행평가가 없습니다 🎉</div>
             ) : (
-              <div className="space-y-3">
-                {assessments
+              <div className="space-y-2">
+                {upcomingAssessments
                   .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-                  .map((assessment) => (
-                    <Card key={assessment.id}>
-                      <CardContent className="pt-6">
-                        <div className="flex items-start justify-between">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <Badge>{assessment.subject}</Badge>
-                              <span className="text-sm font-medium">
-                                {new Date(assessment.date).toLocaleDateString('ko-KR')}
-                              </span>
+                  .map((assessment) => {
+                    const today = isToday(assessment.date);
+                    const daysUntil = Math.ceil(
+                      (new Date(assessment.date).getTime() - new Date().setHours(0, 0, 0, 0)) /
+                        (1000 * 60 * 60 * 24)
+                    );
+                    return (
+                      <Card
+                        key={assessment.id}
+                        className={`touch-manipulation active:scale-[0.99] transition-all ${
+                          today ? 'border-orange-200 bg-orange-50/50' : ''
+                        }`}
+                      >
+                        <CardContent className="p-3 sm:pt-5 sm:pb-4 sm:px-5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="space-y-1 min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <Badge className="text-[11px] sm:text-xs">{assessment.subject}</Badge>
+                                <span className="text-xs sm:text-sm font-medium text-gray-600">
+                                  {new Date(assessment.date).toLocaleDateString('ko-KR')}
+                                </span>
+                                {today && (
+                                  <Badge
+                                    variant="secondary"
+                                    className="bg-orange-100 text-orange-700 border-orange-300 text-[11px] sm:text-xs"
+                                  >
+                                    <Clock className="w-3 h-3 mr-0.5" />
+                                    오늘
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-xs sm:text-sm text-gray-700 leading-relaxed">
+                                {assessment.description}
+                              </p>
                             </div>
-                            <p className="text-sm text-gray-700">{assessment.description}</p>
+                            {!today && (
+                              <div className="flex-shrink-0 bg-blue-50 text-blue-600 rounded-lg px-2 py-1 text-center min-w-[48px]">
+                                <span className="text-xs font-bold">D-{daysUntil}</span>
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
               </div>
             )}
           </CardContent>
         </Card>
+
+        {/* 완료된 수행평가 (접이식) */}
+        {completedAssessments.length > 0 && (
+          <Collapsible open={completedOpen} onOpenChange={setCompletedOpen}>
+            <Card className="border-green-200 shadow-sm">
+              <CollapsibleTrigger asChild>
+                <CardHeader className="px-3 py-3 sm:px-6 sm:py-4 cursor-pointer touch-manipulation active:bg-green-50/50 transition-colors rounded-t-lg">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2 text-base sm:text-lg text-green-700">
+                        <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                        완료된 수행평가 ({completedAssessments.length}개)
+                      </CardTitle>
+                      <CardDescription className="text-xs sm:text-sm mt-1">
+                        탭하여 {completedOpen ? '접기' : '펼치기'}
+                      </CardDescription>
+                    </div>
+                    <ChevronDown
+                      className={`w-5 h-5 text-green-600 transition-transform duration-200 ${
+                        completedOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </div>
+                </CardHeader>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="px-3 pb-3 sm:px-6 sm:pb-6 pt-0">
+                  <div className="space-y-2">
+                    {completedAssessments
+                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                      .map((assessment) => (
+                        <Card key={assessment.id} className="opacity-70 bg-green-50/30">
+                          <CardContent className="p-3 sm:pt-5 sm:pb-4 sm:px-5">
+                            <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                              <Badge
+                                variant="secondary"
+                                className="bg-green-100 text-green-700 text-[11px] sm:text-xs"
+                              >
+                                {assessment.subject}
+                              </Badge>
+                              <span className="text-xs sm:text-sm font-medium text-gray-500 line-through">
+                                {new Date(assessment.date).toLocaleDateString('ko-KR')}
+                              </span>
+                              <Badge
+                                variant="secondary"
+                                className="bg-green-100 text-green-700 border-green-300 text-[11px] sm:text-xs"
+                              >
+                                <CheckCircle2 className="w-3 h-3 mr-0.5" />
+                                완료
+                              </Badge>
+                            </div>
+                            <p className="text-xs sm:text-sm text-gray-500 leading-relaxed">
+                              {assessment.description}
+                            </p>
+                          </CardContent>
+                        </Card>
+                      ))}
+                  </div>
+                </CardContent>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
+        )}
+
+        {/* Bottom safe area for mobile */}
+        <div className="h-4 sm:h-0" />
       </div>
     </div>
   );
