@@ -5,11 +5,26 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Calendar } from '@/components/ui/calendar';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { Assessment } from '@/types/assessment';
 import { getAssessmentsByClass } from '@/lib/firebaseStorage';
-import { requestNotificationPermission, scheduleNotification, sendTestNotification } from '@/lib/notification';
-import { ChevronLeft, Bell, BellOff, CheckCircle2, Clock, BellRing, ChevronDown } from 'lucide-react';
+import {
+  requestNotificationPermission,
+  scheduleNotification,
+  sendTestNotification,
+  getPermissionResetGuide,
+  getNotificationPermission,
+  isNotificationSupported,
+} from '@/lib/notification';
+import { ChevronLeft, Bell, BellOff, CheckCircle2, Clock, BellRing, ChevronDown, AlertTriangle } from 'lucide-react';
 import { ko } from 'date-fns/locale';
 
 export default function StudentCalendar() {
@@ -22,6 +37,7 @@ export default function StudentCalendar() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [completedOpen, setCompletedOpen] = useState(false);
+  const [showPermissionGuide, setShowPermissionGuide] = useState(false);
 
   useEffect(() => {
     loadAssessments();
@@ -53,15 +69,32 @@ export default function StudentCalendar() {
   };
 
   const handleEnableNotifications = async () => {
-    const granted = await requestNotificationPermission();
-    if (granted) {
+    if (!isNotificationSupported()) {
+      toast.error('이 브라우저는 알림을 지원하지 않습니다.');
+      return;
+    }
+
+    const currentPermission = getNotificationPermission();
+
+    // 이미 denied 상태이면 브라우저에서 재요청 불가 → 안내 다이얼로그 표시
+    if (currentPermission === 'denied') {
+      setShowPermissionGuide(true);
+      return;
+    }
+
+    const result = await requestNotificationPermission();
+
+    if (result.granted) {
       setNotificationsEnabled(true);
       assessments.forEach((assessment) => {
         scheduleNotification(assessment);
       });
-      toast.success('알림이 활성화되었습니다! 이 페이지를 열어둔 상태에서 알림이 전송됩니다.');
+      toast.success('알림이 활성화되었습니다! 🎉');
+    } else if (result.status === 'denied') {
+      // 방금 거부한 경우
+      setShowPermissionGuide(true);
     } else {
-      toast.error('알림 권한이 거부되었습니다. 브라우저 설정에서 알림을 허용해주세요.');
+      toast.info('알림 권한 요청이 취소되었습니다. 다시 시도해주세요.');
     }
   };
 
@@ -153,6 +186,55 @@ export default function StudentCalendar() {
           </div>
         </div>
       </div>
+
+      {/* 알림 권한 안내 다이얼로그 */}
+      <Dialog open={showPermissionGuide} onOpenChange={setShowPermissionGuide}>
+        <DialogContent className="max-w-[90vw] sm:max-w-md rounded-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+              알림 권한 설정 필요
+            </DialogTitle>
+            <DialogDescription className="text-left space-y-3 pt-2">
+              <p className="text-sm">
+                이 사이트의 알림 권한이 <strong className="text-red-600">차단</strong> 상태입니다.
+                브라우저에서 직접 권한을 변경해야 합니다.
+              </p>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
+                <p className="font-semibold text-amber-800 mb-2">📋 설정 변경 방법:</p>
+                <p className="text-amber-700 leading-relaxed">{getPermissionResetGuide()}</p>
+              </div>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
+                <p className="font-semibold text-blue-800 mb-1">💡 간단한 방법:</p>
+                <ol className="text-blue-700 space-y-1 list-decimal list-inside text-xs sm:text-sm">
+                  <li>주소창 왼쪽의 <strong>🔒 자물쇠</strong> 아이콘을 탭하세요</li>
+                  <li><strong>"사이트 설정"</strong> 또는 <strong>"권한"</strong>을 탭하세요</li>
+                  <li><strong>"알림"</strong> 항목을 찾아 <strong>"허용"</strong>으로 변경하세요</li>
+                  <li>페이지를 <strong>새로고침</strong>한 후 다시 시도하세요</li>
+                </ol>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button
+              variant="outline"
+              onClick={() => setShowPermissionGuide(false)}
+              className="w-full sm:w-auto"
+            >
+              닫기
+            </Button>
+            <Button
+              onClick={() => {
+                setShowPermissionGuide(false);
+                window.location.reload();
+              }}
+              className="w-full sm:w-auto"
+            >
+              새로고침
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="max-w-6xl mx-auto px-3 py-4 sm:px-6 sm:py-6 md:px-8 space-y-4 sm:space-y-6">
         {/* 알림 안내 카드 */}

@@ -5,23 +5,40 @@ export const isNotificationSupported = (): boolean => {
   return 'Notification' in window;
 };
 
+// 현재 알림 권한 상태 반환
+export const getNotificationPermission = (): string => {
+  if (!isNotificationSupported()) return 'unsupported';
+  return Notification.permission; // 'default', 'granted', 'denied'
+};
+
 // 브라우저 알림 권한 요청
-export const requestNotificationPermission = async (): Promise<boolean> => {
+export const requestNotificationPermission = async (): Promise<{
+  granted: boolean;
+  status: 'granted' | 'denied' | 'default' | 'unsupported';
+}> => {
   if (!isNotificationSupported()) {
     console.log('이 브라우저는 알림을 지원하지 않습니다');
-    return false;
+    return { granted: false, status: 'unsupported' };
   }
 
   if (Notification.permission === 'granted') {
-    return true;
+    return { granted: true, status: 'granted' };
   }
 
-  if (Notification.permission !== 'denied') {
+  if (Notification.permission === 'denied') {
+    // 이미 거부된 상태 - 브라우저에서 재요청 불가
+    console.log('알림 권한이 이전에 거부되었습니다. 사이트 설정에서 직접 변경해야 합니다.');
+    return { granted: false, status: 'denied' };
+  }
+
+  // 'default' 상태 - 권한 요청 가능
+  try {
     const permission = await Notification.requestPermission();
-    return permission === 'granted';
+    return { granted: permission === 'granted', status: permission as 'granted' | 'denied' | 'default' };
+  } catch (error) {
+    console.error('알림 권한 요청 실패:', error);
+    return { granted: false, status: 'denied' };
   }
-
-  return false;
 };
 
 // 이미 스케줄된 알림 추적 (중복 방지)
@@ -111,4 +128,23 @@ export const sendTestNotification = (): void => {
       console.error('테스트 알림 전송 실패:', error);
     }
   }
+};
+
+// 브라우저별 알림 권한 재설정 안내 메시지 생성
+export const getPermissionResetGuide = (): string => {
+  const ua = navigator.userAgent.toLowerCase();
+  
+  if (ua.includes('samsung')) {
+    return '삼성 인터넷: 주소창 왼쪽 🔒 아이콘 → 사이트 설정 → 알림 → 허용으로 변경';
+  } else if (ua.includes('crios') || ua.includes('chrome')) {
+    return 'Chrome: 주소창 왼쪽 🔒 아이콘 탭 → "사이트 설정" → "알림" → "허용"으로 변경';
+  } else if (ua.includes('safari') && !ua.includes('chrome')) {
+    return 'Safari: 설정 → Safari → 웹사이트 → 알림 → 이 사이트를 "허용"으로 변경';
+  } else if (ua.includes('firefox') || ua.includes('fxios')) {
+    return 'Firefox: 주소창 왼쪽 🔒 아이콘 → 알림 → "허용"으로 변경';
+  } else if (ua.includes('edg')) {
+    return 'Edge: 주소창 왼쪽 🔒 아이콘 → 사이트 권한 → 알림 → "허용"으로 변경';
+  }
+  
+  return '주소창 왼쪽의 🔒(자물쇠) 아이콘을 탭 → 사이트 설정 → 알림 → "허용"으로 변경해주세요';
 };
