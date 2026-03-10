@@ -19,17 +19,31 @@ interface FirestoreAssessment extends Omit<Assessment, 'date'> {
   date: Timestamp;
 }
 
+// YYYY-MM-DD 문자열을 로컬 타임존 기준 Date로 파싱 (UTC 파싱 문제 방지)
+const parseDateString = (dateStr: string): Date => {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(year, month - 1, day, 12, 0, 0); // 정오로 설정하여 타임존 이슈 방지
+};
+
+// Date 객체를 YYYY-MM-DD 문자열로 변환 (로컬 타임존 기준)
+const formatDateToString = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 // Assessment를 Firestore 형식으로 변환
 const toFirestore = (assessment: Omit<Assessment, 'id'>): Omit<FirestoreAssessment, 'id'> => ({
   ...assessment,
-  date: Timestamp.fromDate(new Date(assessment.date))
+  date: Timestamp.fromDate(parseDateString(assessment.date))
 });
 
 // Firestore 데이터를 Assessment 형식으로 변환
 const fromFirestore = (id: string, data: FirestoreAssessment): Assessment => ({
   ...data,
   id,
-  date: data.date.toDate().toISOString().split('T')[0]
+  date: formatDateToString(data.date.toDate())
 });
 
 // 모든 수행평가 가져오기

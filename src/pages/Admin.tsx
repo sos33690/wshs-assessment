@@ -11,6 +11,12 @@ import { Assessment, SUBJECTS } from '@/types/assessment';
 import { getAssessments, addAssessment, updateAssessment, deleteAssessment } from '@/lib/firebaseStorage';
 import { Pencil, Trash2, LogOut } from 'lucide-react';
 
+// YYYY-MM-DD 문자열을 로컬 타임존 기준 Date로 파싱 (UTC 파싱 문제 방지)
+const parseLocalDate = (dateStr: string): Date => {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(year, month - 1, day);
+};
+
 export default function Admin() {
   const navigate = useNavigate();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -39,8 +45,8 @@ export default function Admin() {
     setLoading(true);
     try {
       const data = await getAssessments();
-      setAssessments(data.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
-    } catch (error) {
+      setAssessments(data.sort((a, b) => parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime()));
+    } catch {
       toast.error('데이터를 불러오는데 실패했습니다');
     } finally {
       setLoading(false);
@@ -97,7 +103,7 @@ export default function Admin() {
       });
 
       await loadAssessments();
-    } catch (error) {
+    } catch {
       toast.error('저장에 실패했습니다');
     } finally {
       setLoading(false);
@@ -124,7 +130,7 @@ export default function Admin() {
       await deleteAssessment(id);
       toast.success('수행평가가 삭제되었습니다');
       await loadAssessments();
-    } catch (error) {
+    } catch {
       toast.error('삭제에 실패했습니다');
     } finally {
       setLoading(false);
@@ -297,7 +303,7 @@ export default function Admin() {
                       <TableRow key={assessment.id}>
                         <TableCell>{assessment.grade}학년 {assessment.classNumber}반</TableCell>
                         <TableCell>{assessment.subject}</TableCell>
-                        <TableCell>{new Date(assessment.date).toLocaleDateString('ko-KR')}</TableCell>
+                        <TableCell>{parseLocalDate(assessment.date).toLocaleDateString('ko-KR')}</TableCell>
                         <TableCell>{assessment.description}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">

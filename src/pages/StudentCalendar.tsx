@@ -27,6 +27,20 @@ import {
 import { ChevronLeft, Bell, BellOff, CheckCircle2, Clock, BellRing, ChevronDown, AlertTriangle } from 'lucide-react';
 import { ko } from 'date-fns/locale';
 
+// YYYY-MM-DD 문자열을 로컬 타임존 기준 Date로 파싱 (UTC 파싱 문제 방지)
+const parseLocalDate = (dateStr: string): Date => {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(year, month - 1, day);
+};
+
+// Date 객체를 YYYY-MM-DD 문자열로 변환 (로컬 타임존 기준)
+const formatLocalDate = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 export default function StudentCalendar() {
   const [searchParams] = useSearchParams();
   const grade = parseInt(searchParams.get('grade') || '1');
@@ -76,7 +90,6 @@ export default function StudentCalendar() {
 
     const currentPermission = getNotificationPermission();
 
-    // 이미 denied 상태이면 브라우저에서 재요청 불가 → 안내 다이얼로그 표시
     if (currentPermission === 'denied') {
       setShowPermissionGuide(true);
       return;
@@ -91,7 +104,6 @@ export default function StudentCalendar() {
       });
       toast.success('알림이 활성화되었습니다! 🎉');
     } else if (result.status === 'denied') {
-      // 방금 거부한 경우
       setShowPermissionGuide(true);
     } else {
       toast.info('알림 권한 요청이 취소되었습니다. 다시 시도해주세요.');
@@ -106,7 +118,7 @@ export default function StudentCalendar() {
   const isPastDate = (dateStr: string): boolean => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const assessmentDate = new Date(dateStr);
+    const assessmentDate = parseLocalDate(dateStr);
     assessmentDate.setHours(0, 0, 0, 0);
     return assessmentDate < today;
   };
@@ -114,13 +126,13 @@ export default function StudentCalendar() {
   const isToday = (dateStr: string): boolean => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const assessmentDate = new Date(dateStr);
+    const assessmentDate = parseLocalDate(dateStr);
     assessmentDate.setHours(0, 0, 0, 0);
     return assessmentDate.getTime() === today.getTime();
   };
 
   const getAssessmentsForDate = (date: Date) => {
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = formatLocalDate(date);
     return assessments.filter((a) => a.date === dateStr);
   };
 
@@ -128,8 +140,9 @@ export default function StudentCalendar() {
   const completedAssessments = assessments.filter((a) => isPastDate(a.date));
   const selectedDateAssessments = selectedDate ? getAssessmentsForDate(selectedDate) : [];
 
-  const upcomingDates = upcomingAssessments.map((a) => new Date(a.date));
-  const completedDates = completedAssessments.map((a) => new Date(a.date));
+  // 캘린더 modifiers용 Date 배열 - 로컬 타임존 기준으로 파싱
+  const upcomingDates = upcomingAssessments.map((a) => parseLocalDate(a.date));
+  const completedDates = completedAssessments.map((a) => parseLocalDate(a.date));
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
@@ -413,11 +426,13 @@ export default function StudentCalendar() {
             ) : (
               <div className="space-y-2">
                 {upcomingAssessments
-                  .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                  .sort((a, b) => parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime())
                   .map((assessment) => {
                     const today = isToday(assessment.date);
+                    const todayStart = new Date();
+                    todayStart.setHours(0, 0, 0, 0);
                     const daysUntil = Math.ceil(
-                      (new Date(assessment.date).getTime() - new Date().setHours(0, 0, 0, 0)) /
+                      (parseLocalDate(assessment.date).getTime() - todayStart.getTime()) /
                         (1000 * 60 * 60 * 24)
                     );
                     return (
@@ -433,7 +448,7 @@ export default function StudentCalendar() {
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <Badge className="text-[11px] sm:text-xs">{assessment.subject}</Badge>
                                 <span className="text-xs sm:text-sm font-medium text-gray-600">
-                                  {new Date(assessment.date).toLocaleDateString('ko-KR')}
+                                  {parseLocalDate(assessment.date).toLocaleDateString('ko-KR')}
                                 </span>
                                 {today && (
                                   <Badge
@@ -492,7 +507,7 @@ export default function StudentCalendar() {
                 <CardContent className="px-3 pb-3 sm:px-6 sm:pb-6 pt-0">
                   <div className="space-y-2">
                     {completedAssessments
-                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                      .sort((a, b) => parseLocalDate(b.date).getTime() - parseLocalDate(a.date).getTime())
                       .map((assessment) => (
                         <Card key={assessment.id} className="opacity-70 bg-green-50/30">
                           <CardContent className="p-3 sm:pt-5 sm:pb-4 sm:px-5">
@@ -504,7 +519,7 @@ export default function StudentCalendar() {
                                 {assessment.subject}
                               </Badge>
                               <span className="text-xs sm:text-sm font-medium text-gray-500 line-through">
-                                {new Date(assessment.date).toLocaleDateString('ko-KR')}
+                                {parseLocalDate(assessment.date).toLocaleDateString('ko-KR')}
                               </span>
                               <Badge
                                 variant="secondary"
