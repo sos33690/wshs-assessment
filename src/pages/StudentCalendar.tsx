@@ -312,26 +312,24 @@ export default function StudentCalendar() {
                     upcoming: upcomingDates,
                     completed: completedDates,
                   }}
-                  modifiersStyles={{
-                    upcoming: {
-                      fontWeight: 'bold',
-                      textDecoration: 'underline',
-                      color: '#3b82f6',
-                    },
-                    completed: {
-                      fontWeight: 'bold',
-                      color: '#22c55e',
-                      textDecoration: 'line-through',
-                    },
+                  modifiersClassNames={{
+                    upcoming: 'calendar-upcoming',
+                    completed: 'calendar-completed',
                   }}
                 />
                 <div className="mt-2 flex items-center justify-center gap-4 text-[11px] sm:text-xs text-gray-500">
-                  <div className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block" />
+                  <div className="flex items-center gap-1.5">
+                    <span className="relative inline-flex items-center justify-center w-5 h-5">
+                      <span className="text-blue-600 font-bold text-[10px]">1</span>
+                      <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-blue-500" />
+                    </span>
                     <span>예정</span>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" />
+                  <div className="flex items-center gap-1.5">
+                    <span className="relative inline-flex items-center justify-center w-5 h-5">
+                      <span className="text-green-600 font-bold text-[10px] line-through">1</span>
+                      <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-green-500" />
+                    </span>
                     <span>완료</span>
                   </div>
                 </div>

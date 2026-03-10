@@ -99,3 +99,45 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* 캘린더 수행평가 날짜 동그라미 표시 */
+@layer components {
+  /* 예정된 수행평가 - 파란색 동그라미 + 파란색 텍스트 */
+  .calendar-upcoming .rdp-day_button {
+    position: relative;
+    color: #2563eb;
+    font-weight: 700;
+  }
+
+  .calendar-upcoming .rdp-day_button::after {
+    content: '';
+    position: absolute;
+    bottom: 2px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: #3b82f6;
+  }
+
+  /* 완료된 수행평가 - 초록색 동그라미 + 초록색 텍스트 + 취소선 */
+  .calendar-completed .rdp-day_button {
+    position: relative;
+    color: #16a34a;
+    font-weight: 700;
+    text-decoration: line-through;
+  }
+
+  .calendar-completed .rdp-day_button::after {
+    content: '';
+    position: absolute;
+    bottom: 2px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: #22c55e;
+  }
+}
