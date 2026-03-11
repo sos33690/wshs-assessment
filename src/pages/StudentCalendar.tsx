@@ -18,11 +18,13 @@ import { Assessment } from '@/types/assessment';
 import { getAssessmentsByClass } from '@/lib/firebaseStorage';
 import {
   requestNotificationPermission,
+  registerServiceWorker,
   scheduleNotification,
   sendTestNotification,
   getPermissionResetGuide,
   getNotificationPermission,
   isNotificationSupported,
+  isServiceWorkerSupported,
 } from '@/lib/notification';
 import { ChevronLeft, Bell, BellOff, CheckCircle2, Clock, BellRing, ChevronDown, AlertTriangle } from 'lucide-react';
 import { ko } from 'date-fns/locale';
@@ -49,6 +51,7 @@ export default function StudentCalendar() {
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [swReady, setSwReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [completedOpen, setCompletedOpen] = useState(false);
   const [showPermissionGuide, setShowPermissionGuide] = useState(false);
@@ -56,7 +59,17 @@ export default function StudentCalendar() {
   useEffect(() => {
     loadAssessments();
     checkNotificationPermission();
+    initServiceWorker();
   }, [grade, classNumber]);
+
+  const initServiceWorker = async () => {
+    if (isServiceWorkerSupported() && Notification.permission === 'granted') {
+      const reg = await registerServiceWorker();
+      if (reg) {
+        setSwReady(true);
+      }
+    }
+  };
 
   const loadAssessments = async () => {
     setLoading(true);
@@ -65,9 +78,9 @@ export default function StudentCalendar() {
       setAssessments(data);
 
       if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-        data.forEach((assessment) => {
-          scheduleNotification(assessment);
-        });
+        for (const assessment of data) {
+          await scheduleNotification(assessment);
+        }
       }
     } catch {
       toast.error('데이터를 불러오는데 실패했습니다');
@@ -99,9 +112,18 @@ export default function StudentCalendar() {
 
     if (result.granted) {
       setNotificationsEnabled(true);
-      assessments.forEach((assessment) => {
-        scheduleNotification(assessment);
-      });
+
+      // Service Worker 등록
+      const reg = await registerServiceWorker();
+      if (reg) {
+        setSwReady(true);
+      }
+
+      // 모든 수행평가에 대해 알림 스케줄링
+      for (const assessment of assessments) {
+        await scheduleNotification(assessment);
+      }
+
       toast.success('알림이 활성화되었습니다! 🎉');
     } else if (result.status === 'denied') {
       setShowPermissionGuide(true);
@@ -110,8 +132,8 @@ export default function StudentCalendar() {
     }
   };
 
-  const handleTestNotification = () => {
-    sendTestNotification();
+  const handleTestNotification = async () => {
+    await sendTestNotification();
     toast.success('테스트 알림을 전송했습니다!');
   };
 
@@ -269,8 +291,17 @@ export default function StudentCalendar() {
                       수행평가 <strong>당일</strong> 알림
                     </li>
                   </ul>
-                  <p className="mt-1.5 text-[10px] sm:text-xs text-green-600">
-                    ⚠️ 이 페이지를 열어둔 상태에서만 알림이 작동합니다.
+                  {swReady ? (
+                    <p className="mt-1.5 text-[10px] sm:text-xs text-green-600">
+                      ✅ Service Worker 활성화됨 — 브라우저가 백그라운드에 있어도 알림을 받을 수 있습니다.
+                    </p>
+                  ) : (
+                    <p className="mt-1.5 text-[10px] sm:text-xs text-green-600">
+                      ⚠️ 이 페이지를 열어둔 상태에서만 알림이 작동합니다.
+                    </p>
+                  )}
+                  <p className="mt-0.5 text-[10px] sm:text-xs text-amber-600">
+                    💡 브라우저를 완전히 종료하면 알림이 전송되지 않습니다. 브라우저를 최소화하거나 다른 탭을 사용해주세요.
                   </p>
                 </div>
               </div>
