@@ -646,7 +646,7 @@ export default function StudentCalendar() {
                                   </Badge>
                                 )}
                               </div>
-                              <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+                              <p className="text-xs sm:text-sm text-foreground/80 dark:text-foreground/75 leading-relaxed font-medium">
                                 {assessment.description}
                               </p>
                               {/* 메모 표시 */}
@@ -769,7 +769,7 @@ export default function StudentCalendar() {
                                 완료
                               </Badge>
                             </div>
-                            <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+                            <p className="text-xs sm:text-sm text-foreground/70 dark:text-foreground/60 leading-relaxed">
                               {assessment.description}
                             </p>
                             {memos[assessment.id] && (
@@ -853,7 +853,11 @@ function AssessmentCard({
             </Badge>
           )}
         </div>
-        <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+        <p className={`text-xs sm:text-sm leading-relaxed font-medium ${
+          past
+            ? 'text-foreground/60 dark:text-foreground/50'
+            : 'text-foreground/80 dark:text-foreground/75'
+        }`}>
           {assessment.description}
         </p>
         {/* 메모 표시 */}

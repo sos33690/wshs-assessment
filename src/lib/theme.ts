@@ -8,11 +8,10 @@ export const getTheme = (): Theme => {
   try {
     const saved = localStorage.getItem(THEME_KEY);
     if (saved === 'dark' || saved === 'light') return saved;
-    // 시스템 설정 따르기
-    if (window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
   } catch {
     // localStorage 접근 불가 시
   }
+  // 기본값: 항상 라이트 모드 (시스템 설정 무시)
   return 'light';
 };
 
