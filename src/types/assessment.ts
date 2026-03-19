@@ -21,6 +21,7 @@ export const SUBJECTS = [
   '체육',
   '미술',
   '논술',
+  '기타',
 ] as const;
 
 export const GRADES = [1, 2, 3] as const;
