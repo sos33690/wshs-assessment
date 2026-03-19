@@ -1,42 +1,24 @@
-// Service Worker for Assessment Notifications
-// 브라우저가 백그라운드에 있을 때도 알림을 표시할 수 있습니다.
+// Service Worker for Assessment Notifications v2
+// 메인 스레드의 주기적 체크 시스템과 함께 작동합니다.
+// SW는 알림 표시와 클릭 처리만 담당합니다.
 
-const CACHE_NAME = 'assessment-sw-v1';
+const SW_VERSION = 'v2';
 
 // Service Worker 설치
 self.addEventListener('install', (event) => {
-  console.log('[SW] Service Worker 설치됨');
+  console.log(`[SW ${SW_VERSION}] Service Worker 설치됨`);
   self.skipWaiting();
 });
 
 // Service Worker 활성화
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Service Worker 활성화됨');
+  console.log(`[SW ${SW_VERSION}] Service Worker 활성화됨`);
   event.waitUntil(self.clients.claim());
 });
 
-// 메시지 수신 - 메인 스레드에서 알림 스케줄링 요청
+// 메시지 수신 - 메인 스레드에서 알림 표시 요청
 self.addEventListener('message', (event) => {
   const { type, payload } = event.data;
-
-  if (type === 'SCHEDULE_NOTIFICATION') {
-    const { title, body, tag, delay } = payload;
-    
-    if (delay > 0) {
-      setTimeout(() => {
-        self.registration.showNotification(title, {
-          body: body,
-          icon: '/images/Notification.jpg',
-          badge: '/images/Notification.jpg',
-          tag: tag,
-          requireInteraction: true,
-          vibrate: [200, 100, 200],
-        });
-      }, delay);
-      
-      console.log(`[SW] 알림 스케줄됨: ${tag} (${Math.round(delay / 1000 / 60)}분 후)`);
-    }
-  }
 
   if (type === 'SHOW_NOTIFICATION') {
     const { title, body, tag } = payload;
@@ -44,10 +26,16 @@ self.addEventListener('message', (event) => {
       body: body,
       icon: '/images/Notification.jpg',
       badge: '/images/Notification.jpg',
-      tag: tag || 'test-notification',
-      requireInteraction: false,
+      tag: tag || 'assessment-notification',
+      requireInteraction: true,
       vibrate: [200, 100, 200],
     });
+    console.log(`[SW ${SW_VERSION}] 알림 표시: ${tag}`);
+  }
+
+  if (type === 'PING') {
+    // 메인 스레드에서 SW 활성 상태 확인용
+    event.source?.postMessage({ type: 'PONG', version: SW_VERSION });
   }
 });
 

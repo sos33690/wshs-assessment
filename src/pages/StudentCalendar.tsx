@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Calendar } from '@/components/ui/calendar';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
@@ -19,23 +20,43 @@ import { getAssessmentsByClass } from '@/lib/firebaseStorage';
 import {
   requestNotificationPermission,
   registerServiceWorker,
-  scheduleNotification,
+  scheduleAllNotifications,
+  startNotificationChecker,
+  stopNotificationChecker,
   sendTestNotification,
   getPermissionResetGuide,
   getNotificationPermission,
   isNotificationSupported,
   isServiceWorkerSupported,
+  getScheduleStatus,
 } from '@/lib/notification';
-import { ChevronLeft, Bell, BellOff, CheckCircle2, Clock, BellRing, ChevronDown, AlertTriangle } from 'lucide-react';
+import { getTheme, toggleTheme, applyTheme, type Theme } from '@/lib/theme';
+import { getMemo, saveMemo } from '@/lib/memo';
+import {
+  ChevronLeft,
+  Bell,
+  BellOff,
+  CheckCircle2,
+  Clock,
+  BellRing,
+  ChevronDown,
+  AlertTriangle,
+  Moon,
+  Sun,
+  Filter,
+  X,
+  StickyNote,
+  Save,
+} from 'lucide-react';
 import { ko } from 'date-fns/locale';
 
-// YYYY-MM-DD 문자열을 로컬 타임존 기준 Date로 파싱 (UTC 파싱 문제 방지)
+// YYYY-MM-DD 문자열을 로컬 타임존 기준 Date로 파싱
 const parseLocalDate = (dateStr: string): Date => {
   const [year, month, day] = dateStr.split('-').map(Number);
   return new Date(year, month - 1, day);
 };
 
-// Date 객체를 YYYY-MM-DD 문자열로 변환 (로컬 타임존 기준)
+// Date 객체를 YYYY-MM-DD 문자열로 변환
 const formatLocalDate = (date: Date): string => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -55,12 +76,47 @@ export default function StudentCalendar() {
   const [loading, setLoading] = useState(true);
   const [completedOpen, setCompletedOpen] = useState(false);
   const [showPermissionGuide, setShowPermissionGuide] = useState(false);
+  const [pendingNotifications, setPendingNotifications] = useState(0);
+
+  // 다크모드
+  const [theme, setThemeState] = useState<Theme>('light');
+
+  // 과목 필터
+  const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
+  const [showFilter, setShowFilter] = useState(false);
+
+  // 개인 메모
+  const [editingMemoId, setEditingMemoId] = useState<string | null>(null);
+  const [memoText, setMemoText] = useState('');
+  const [memos, setMemos] = useState<Record<string, string>>({});
+
+  // 다크모드 초기화
+  useEffect(() => {
+    const currentTheme = getTheme();
+    setThemeState(currentTheme);
+    applyTheme(currentTheme);
+  }, []);
 
   useEffect(() => {
     loadAssessments();
     checkNotificationPermission();
     initServiceWorker();
+
+    // 컴포넌트 언마운트 시 체커 중지
+    return () => {
+      stopNotificationChecker();
+    };
   }, [grade, classNumber]);
+
+  // 메모 로드
+  const loadMemos = useCallback((assessmentList: Assessment[]) => {
+    const loadedMemos: Record<string, string> = {};
+    assessmentList.forEach((a) => {
+      const memo = getMemo(a.id);
+      if (memo) loadedMemos[a.id] = memo;
+    });
+    setMemos(loadedMemos);
+  }, []);
 
   const initServiceWorker = async () => {
     if (isServiceWorkerSupported() && Notification.permission === 'granted') {
@@ -76,11 +132,12 @@ export default function StudentCalendar() {
     try {
       const data = await getAssessmentsByClass(grade, classNumber);
       setAssessments(data);
+      loadMemos(data);
 
+      // 알림이 허용된 상태면 스케줄링 + 체커 시작
       if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-        for (const assessment of data) {
-          await scheduleNotification(assessment);
-        }
+        const count = await scheduleAllNotifications(data);
+        setPendingNotifications(count);
       }
     } catch {
       toast.error('데이터를 불러오는데 실패했습니다');
@@ -91,7 +148,15 @@ export default function StudentCalendar() {
 
   const checkNotificationPermission = () => {
     if (typeof Notification !== 'undefined') {
-      setNotificationsEnabled(Notification.permission === 'granted');
+      const granted = Notification.permission === 'granted';
+      setNotificationsEnabled(granted);
+
+      // 이미 허용된 상태면 체커 시작
+      if (granted) {
+        startNotificationChecker();
+        const status = getScheduleStatus();
+        setPendingNotifications(status.pending);
+      }
     }
   };
 
@@ -112,17 +177,12 @@ export default function StudentCalendar() {
 
     if (result.granted) {
       setNotificationsEnabled(true);
-
-      // Service Worker 등록
       const reg = await registerServiceWorker();
-      if (reg) {
-        setSwReady(true);
-      }
+      if (reg) setSwReady(true);
 
-      // 모든 수행평가에 대해 알림 스케줄링
-      for (const assessment of assessments) {
-        await scheduleNotification(assessment);
-      }
+      // 모든 수행평가 알림 스케줄링 + 체커 시작
+      const count = await scheduleAllNotifications(assessments);
+      setPendingNotifications(count);
 
       toast.success('알림이 활성화되었습니다! 🎉');
     } else if (result.status === 'denied') {
@@ -135,6 +195,45 @@ export default function StudentCalendar() {
   const handleTestNotification = async () => {
     await sendTestNotification();
     toast.success('테스트 알림을 전송했습니다!');
+  };
+
+  // 다크모드 토글
+  const handleToggleTheme = () => {
+    const newTheme = toggleTheme();
+    setThemeState(newTheme);
+  };
+
+  // 과목 필터 토글
+  const handleSubjectToggle = (subject: string) => {
+    setSelectedSubjects((prev) =>
+      prev.includes(subject) ? prev.filter((s) => s !== subject) : [...prev, subject]
+    );
+  };
+
+  const clearFilter = () => {
+    setSelectedSubjects([]);
+  };
+
+  // 메모 저장
+  const handleSaveMemo = (assessmentId: string) => {
+    saveMemo(assessmentId, memoText);
+    setMemos((prev) => {
+      const next = { ...prev };
+      if (memoText.trim()) {
+        next[assessmentId] = memoText.trim();
+      } else {
+        delete next[assessmentId];
+      }
+      return next;
+    });
+    setEditingMemoId(null);
+    setMemoText('');
+    toast.success('메모가 저장되었습니다!');
+  };
+
+  const handleEditMemo = (assessmentId: string) => {
+    setEditingMemoId(assessmentId);
+    setMemoText(memos[assessmentId] || '');
   };
 
   const isPastDate = (dateStr: string): boolean => {
@@ -153,23 +252,46 @@ export default function StudentCalendar() {
     return assessmentDate.getTime() === today.getTime();
   };
 
+  // 완료된 수행평가는 필터 없이 항상 전체 표시
+  const allCompletedAssessments = assessments.filter((a) => isPastDate(a.date));
+
+  // 예정된 수행평가에만 과목 필터 적용
+  const allUpcomingAssessments = assessments.filter((a) => !isPastDate(a.date));
+  const upcomingAssessments =
+    selectedSubjects.length > 0
+      ? allUpcomingAssessments.filter((a) => selectedSubjects.includes(a.subject))
+      : allUpcomingAssessments;
+
+  // 완료된 수행평가는 필터 무관하게 전체 표시
+  const completedAssessments = allCompletedAssessments;
+
+  // 선택된 날짜의 수행평가: 예정은 필터 적용, 완료는 전체 표시
   const getAssessmentsForDate = (date: Date) => {
     const dateStr = formatLocalDate(date);
-    return assessments.filter((a) => a.date === dateStr);
+    const upcomingForDate = upcomingAssessments.filter((a) => a.date === dateStr);
+    const completedForDate = allCompletedAssessments.filter((a) => a.date === dateStr);
+    return [...upcomingForDate, ...completedForDate];
   };
 
-  const upcomingAssessments = assessments.filter((a) => !isPastDate(a.date));
-  const completedAssessments = assessments.filter((a) => isPastDate(a.date));
   const selectedDateAssessments = selectedDate ? getAssessmentsForDate(selectedDate) : [];
 
-  // 캘린더 modifiers용 Date 배열 - 로컬 타임존 기준으로 파싱
+  // 과목 필터에 표시할 과목 목록: 예정된 수행평가의 과목만 표시
+  const availableSubjects = [...new Set(allUpcomingAssessments.map((a) => a.subject))].sort();
+
+  // 캘린더 modifiers - 예정은 필터 적용, 완료는 전체 표시
   const upcomingDates = upcomingAssessments.map((a) => parseLocalDate(a.date));
-  const completedDates = completedAssessments.map((a) => parseLocalDate(a.date));
+  const completedDates = allCompletedAssessments.map((a) => parseLocalDate(a.date));
+
+  // 다크모드 배경색
+  const bgClass =
+    theme === 'dark'
+      ? 'min-h-screen bg-background text-foreground'
+      : 'min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50';
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
+    <div className={bgClass}>
       {/* Sticky mobile header */}
-      <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-md border-b border-gray-200/60 px-3 py-2.5 sm:px-6 sm:py-3 md:px-8">
+      <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-md border-b px-3 py-2.5 sm:px-6 sm:py-3 md:px-8">
         <div className="max-w-6xl mx-auto flex items-center justify-between gap-2">
           <Button
             variant="ghost"
@@ -183,11 +305,35 @@ export default function StudentCalendar() {
             <span className="hidden sm:inline">돌아가기</span>
           </Button>
 
-          <h1 className="text-sm sm:text-base font-semibold text-gray-800 truncate">
+          <h1 className="text-sm sm:text-base font-semibold truncate">
             {grade}학년 {classNumber}반
           </h1>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1">
+            {/* 다크모드 토글 */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="touch-manipulation px-2"
+              onClick={handleToggleTheme}
+              title={theme === 'dark' ? '라이트 모드' : '다크 모드'}
+            >
+              {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </Button>
+
+            {/* 필터 버튼 */}
+            <Button
+              variant={selectedSubjects.length > 0 ? 'default' : 'ghost'}
+              size="sm"
+              className="touch-manipulation px-2"
+              onClick={() => setShowFilter(!showFilter)}
+            >
+              <Filter className="w-4 h-4" />
+              {selectedSubjects.length > 0 && (
+                <span className="ml-1 text-xs">{selectedSubjects.length}</span>
+              )}
+            </Button>
+
             {notificationsEnabled && (
               <Button
                 variant="ghost"
@@ -196,31 +342,69 @@ export default function StudentCalendar() {
                 onClick={handleTestNotification}
               >
                 <BellRing className="w-4 h-4" />
-                <span className="hidden sm:inline ml-1.5">테스트</span>
               </Button>
             )}
             <Button
               variant={notificationsEnabled ? 'ghost' : 'default'}
               size="sm"
-              className="touch-manipulation px-2 sm:px-3"
+              className="touch-manipulation px-2"
               onClick={handleEnableNotifications}
               disabled={notificationsEnabled}
             >
               {notificationsEnabled ? (
-                <>
-                  <Bell className="w-4 h-4" />
-                  <span className="hidden sm:inline ml-1.5">알림 ON</span>
-                </>
+                <Bell className="w-4 h-4" />
               ) : (
-                <>
-                  <BellOff className="w-4 h-4" />
-                  <span className="hidden sm:inline ml-1.5">알림 활성화</span>
-                </>
+                <BellOff className="w-4 h-4" />
               )}
             </Button>
           </div>
         </div>
       </div>
+
+      {/* 과목 필터 패널 */}
+      {showFilter && (
+        <div className="border-b bg-card px-3 py-3 sm:px-6">
+          <div className="max-w-6xl mx-auto">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-semibold flex items-center gap-1.5">
+                <Filter className="w-3.5 h-3.5" />
+                과목 필터 (예정된 수행평가만)
+              </span>
+              {selectedSubjects.length > 0 && (
+                <Button variant="ghost" size="sm" onClick={clearFilter} className="text-xs h-7 px-2">
+                  <X className="w-3 h-3 mr-1" />
+                  초기화
+                </Button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {availableSubjects.map((subject) => {
+                const isSelected = selectedSubjects.includes(subject);
+                const count = allUpcomingAssessments.filter((a) => a.subject === subject).length;
+                return (
+                  <Badge
+                    key={subject}
+                    variant={isSelected ? 'default' : 'outline'}
+                    className={`cursor-pointer touch-manipulation text-xs py-1 px-2.5 transition-colors ${
+                      isSelected
+                        ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                        : 'hover:bg-accent'
+                    }`}
+                    onClick={() => handleSubjectToggle(subject)}
+                  >
+                    {subject} ({count})
+                  </Badge>
+                );
+              })}
+            </div>
+            {selectedSubjects.length > 0 && (
+              <p className="text-[11px] text-muted-foreground mt-2">
+                {selectedSubjects.length}개 과목 선택됨 · 예정 {upcomingAssessments.length}개 표시 중 (완료된 수행평가는 항상 표시)
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 알림 권한 안내 다이얼로그 */}
       <Dialog open={showPermissionGuide} onOpenChange={setShowPermissionGuide}>
@@ -235,16 +419,16 @@ export default function StudentCalendar() {
                 이 사이트의 알림 권한이 <strong className="text-red-600">차단</strong> 상태입니다.
                 브라우저에서 직접 권한을 변경해야 합니다.
               </p>
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
-                <p className="font-semibold text-amber-800 mb-2">📋 설정 변경 방법:</p>
-                <p className="text-amber-700 leading-relaxed">{getPermissionResetGuide()}</p>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm dark:bg-amber-950 dark:border-amber-800">
+                <p className="font-semibold text-amber-800 dark:text-amber-300 mb-2">📋 설정 변경 방법:</p>
+                <p className="text-amber-700 dark:text-amber-400 leading-relaxed">{getPermissionResetGuide()}</p>
               </div>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
-                <p className="font-semibold text-blue-800 mb-1">💡 간단한 방법:</p>
-                <ol className="text-blue-700 space-y-1 list-decimal list-inside text-xs sm:text-sm">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm dark:bg-blue-950 dark:border-blue-800">
+                <p className="font-semibold text-blue-800 dark:text-blue-300 mb-1">💡 간단한 방법:</p>
+                <ol className="text-blue-700 dark:text-blue-400 space-y-1 list-decimal list-inside text-xs sm:text-sm">
                   <li>주소창 왼쪽의 <strong>🔒 자물쇠</strong> 아이콘을 탭하세요</li>
-                  <li><strong>"사이트 설정"</strong> 또는 <strong>"권한"</strong>을 탭하세요</li>
-                  <li><strong>"알림"</strong> 항목을 찾아 <strong>"허용"</strong>으로 변경하세요</li>
+                  <li><strong>&quot;사이트 설정&quot;</strong> 또는 <strong>&quot;권한&quot;</strong>을 탭하세요</li>
+                  <li><strong>&quot;알림&quot;</strong> 항목을 찾아 <strong>&quot;허용&quot;</strong>으로 변경하세요</li>
                   <li>페이지를 <strong>새로고침</strong>한 후 다시 시도하세요</li>
                 </ol>
               </div>
@@ -274,34 +458,33 @@ export default function StudentCalendar() {
       <div className="max-w-6xl mx-auto px-3 py-4 sm:px-6 sm:py-6 md:px-8 space-y-4 sm:space-y-6">
         {/* 알림 안내 카드 */}
         {notificationsEnabled && (
-          <Card className="border-green-200 bg-green-50 shadow-sm">
+          <Card className="border-green-200 bg-green-50 dark:bg-green-950/30 dark:border-green-800 shadow-sm">
             <CardContent className="pt-3 pb-3 px-3 sm:pt-4 sm:pb-4 sm:px-6">
               <div className="flex items-start gap-2.5">
-                <Bell className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
-                <div className="text-xs sm:text-sm text-green-800 min-w-0">
+                <Bell className="w-4 h-4 text-green-600 dark:text-green-400 mt-0.5 flex-shrink-0" />
+                <div className="text-xs sm:text-sm text-green-800 dark:text-green-300 min-w-0">
                   <p className="font-semibold mb-1">🔔 알림이 활성화되었습니다!</p>
-                  <ul className="list-disc list-inside space-y-0.5 text-green-700 text-[11px] sm:text-sm">
-                    <li>
-                      수행평가 <strong>3일 전</strong> 알림
-                    </li>
-                    <li>
-                      수행평가 <strong>1일 전</strong> 알림
-                    </li>
-                    <li>
-                      수행평가 <strong>당일</strong> 알림
-                    </li>
+                  <ul className="list-disc list-inside space-y-0.5 text-green-700 dark:text-green-400 text-[11px] sm:text-sm">
+                    <li>수행평가 <strong>3일 전</strong> 알림 (오전 9시)</li>
+                    <li>수행평가 <strong>1일 전</strong> 알림 (오전 9시)</li>
+                    <li>수행평가 <strong>당일</strong> 알림 (오전 7시)</li>
                   </ul>
-                  {swReady ? (
-                    <p className="mt-1.5 text-[10px] sm:text-xs text-green-600">
-                      ✅ Service Worker 활성화됨 — 브라우저가 백그라운드에 있어도 알림을 받을 수 있습니다.
-                    </p>
-                  ) : (
-                    <p className="mt-1.5 text-[10px] sm:text-xs text-green-600">
-                      ⚠️ 이 페이지를 열어둔 상태에서만 알림이 작동합니다.
+                  {pendingNotifications > 0 && (
+                    <p className="mt-1.5 text-[10px] sm:text-xs text-blue-600 dark:text-blue-400">
+                      📋 대기 중인 알림: {pendingNotifications}개
                     </p>
                   )}
-                  <p className="mt-0.5 text-[10px] sm:text-xs text-amber-600">
-                    💡 브라우저를 완전히 종료하면 알림이 전송되지 않습니다. 브라우저를 최소화하거나 다른 탭을 사용해주세요.
+                  {swReady ? (
+                    <p className="mt-1 text-[10px] sm:text-xs text-green-600 dark:text-green-500">
+                      ✅ 이 탭이 열려있으면 백그라운드에서도 알림이 전송됩니다.
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-[10px] sm:text-xs text-green-600 dark:text-green-500">
+                      ✅ 이 탭이 열려있으면 알림이 전송됩니다.
+                    </p>
+                  )}
+                  <p className="mt-0.5 text-[10px] sm:text-xs text-amber-600 dark:text-amber-400">
+                    💡 30초마다 알림 시간을 확인합니다. 탭을 닫거나 브라우저를 종료하면 알림이 전송되지 않습니다.
                   </p>
                 </div>
               </div>
@@ -321,9 +504,13 @@ export default function StudentCalendar() {
                   예정 <strong>{upcomingAssessments.length}개</strong>
                   {completedAssessments.length > 0 && (
                     <>
-                      {' '}
-                      · 완료 <strong>{completedAssessments.length}개</strong>
+                      {' '}· 완료 <strong>{completedAssessments.length}개</strong>
                     </>
+                  )}
+                  {selectedSubjects.length > 0 && (
+                    <span className="text-blue-600 dark:text-blue-400 ml-1">
+                      (필터 적용 중 - 예정만)
+                    </span>
                   )}
                 </>
               )}
@@ -348,19 +535,13 @@ export default function StudentCalendar() {
                     completed: 'calendar-completed',
                   }}
                 />
-                <div className="mt-2 flex items-center justify-center gap-4 text-[11px] sm:text-xs text-gray-500">
+                <div className="mt-2 flex items-center justify-center gap-4 text-[11px] sm:text-xs text-muted-foreground">
                   <div className="flex items-center gap-1.5">
-                    <span className="relative inline-flex items-center justify-center w-5 h-5">
-                      <span className="text-blue-600 font-bold text-[10px]">1</span>
-                      <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-blue-500" />
-                    </span>
+                    <span className="text-blue-600 font-bold text-[11px]">18</span>
                     <span>예정</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="relative inline-flex items-center justify-center w-5 h-5">
-                      <span className="text-green-600 font-bold text-[10px] line-through">1</span>
-                      <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-green-500" />
-                    </span>
+                    <span className="text-green-600 font-bold text-[11px] line-through">18</span>
                     <span>완료</span>
                   </div>
                 </div>
@@ -379,9 +560,9 @@ export default function StudentCalendar() {
                 </h3>
 
                 {loading ? (
-                  <div className="text-center py-6 text-gray-500 text-sm">데이터를 불러오는 중...</div>
+                  <div className="text-center py-6 text-muted-foreground text-sm">데이터를 불러오는 중...</div>
                 ) : selectedDateAssessments.length === 0 ? (
-                  <div className="text-center py-6 text-gray-400 text-sm">
+                  <div className="text-center py-6 text-muted-foreground text-sm">
                     이 날짜에는 수행평가가 없습니다
                   </div>
                 ) : (
@@ -390,43 +571,19 @@ export default function StudentCalendar() {
                       const past = isPastDate(assessment.date);
                       const today = isToday(assessment.date);
                       return (
-                        <Card
+                        <AssessmentCard
                           key={assessment.id}
-                          className={`transition-colors ${
-                            past
-                              ? 'opacity-70 border-green-200 bg-green-50/50'
-                              : today
-                                ? 'border-orange-200 bg-orange-50/50'
-                                : ''
-                          }`}
-                        >
-                          <CardContent className="p-3 sm:pt-5 sm:pb-4 sm:px-5">
-                            <div className="flex items-center gap-2 flex-wrap mb-1">
-                              <Badge className="text-[11px] sm:text-xs">{assessment.subject}</Badge>
-                              {past && (
-                                <Badge
-                                  variant="secondary"
-                                  className="bg-green-100 text-green-700 border-green-300 text-[11px] sm:text-xs"
-                                >
-                                  <CheckCircle2 className="w-3 h-3 mr-0.5" />
-                                  완료
-                                </Badge>
-                              )}
-                              {today && (
-                                <Badge
-                                  variant="secondary"
-                                  className="bg-orange-100 text-orange-700 border-orange-300 text-[11px] sm:text-xs"
-                                >
-                                  <Clock className="w-3 h-3 mr-0.5" />
-                                  오늘
-                                </Badge>
-                              )}
-                            </div>
-                            <p className="text-xs sm:text-sm text-gray-700 leading-relaxed">
-                              {assessment.description}
-                            </p>
-                          </CardContent>
-                        </Card>
+                          assessment={assessment}
+                          past={past}
+                          today={today}
+                          memo={memos[assessment.id]}
+                          isEditingMemo={editingMemoId === assessment.id}
+                          memoText={memoText}
+                          onMemoTextChange={setMemoText}
+                          onEditMemo={() => handleEditMemo(assessment.id)}
+                          onSaveMemo={() => handleSaveMemo(assessment.id)}
+                          onCancelMemo={() => { setEditingMemoId(null); setMemoText(''); }}
+                        />
                       );
                     })}
                   </div>
@@ -449,9 +606,9 @@ export default function StudentCalendar() {
           </CardHeader>
           <CardContent className="px-3 pb-3 sm:px-6 sm:pb-6">
             {loading ? (
-              <div className="text-center py-6 text-gray-500 text-sm">데이터를 불러오는 중...</div>
+              <div className="text-center py-6 text-muted-foreground text-sm">데이터를 불러오는 중...</div>
             ) : upcomingAssessments.length === 0 ? (
-              <div className="text-center py-6 text-gray-400 text-sm">예정된 수행평가가 없습니다 🎉</div>
+              <div className="text-center py-6 text-muted-foreground text-sm">예정된 수행평가가 없습니다 🎉</div>
             ) : (
               <div className="space-y-2">
                 {upcomingAssessments
@@ -468,7 +625,7 @@ export default function StudentCalendar() {
                       <Card
                         key={assessment.id}
                         className={`touch-manipulation active:scale-[0.99] transition-all ${
-                          today ? 'border-orange-200 bg-orange-50/50' : ''
+                          today ? 'border-orange-200 bg-orange-50/50 dark:border-orange-800 dark:bg-orange-950/30' : ''
                         }`}
                       >
                         <CardContent className="p-3 sm:pt-5 sm:pb-4 sm:px-5">
@@ -476,25 +633,79 @@ export default function StudentCalendar() {
                             <div className="space-y-1 min-w-0 flex-1">
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <Badge className="text-[11px] sm:text-xs">{assessment.subject}</Badge>
-                                <span className="text-xs sm:text-sm font-medium text-gray-600">
+                                <span className="text-xs sm:text-sm font-medium text-muted-foreground">
                                   {parseLocalDate(assessment.date).toLocaleDateString('ko-KR')}
                                 </span>
                                 {today && (
                                   <Badge
                                     variant="secondary"
-                                    className="bg-orange-100 text-orange-700 border-orange-300 text-[11px] sm:text-xs"
+                                    className="bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-900 dark:text-orange-300 dark:border-orange-700 text-[11px] sm:text-xs"
                                   >
                                     <Clock className="w-3 h-3 mr-0.5" />
                                     오늘
                                   </Badge>
                                 )}
                               </div>
-                              <p className="text-xs sm:text-sm text-gray-700 leading-relaxed">
+                              <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
                                 {assessment.description}
                               </p>
+                              {/* 메모 표시 */}
+                              {memos[assessment.id] && editingMemoId !== assessment.id && (
+                                <div
+                                  className="mt-1.5 flex items-start gap-1.5 p-2 rounded-md bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 cursor-pointer"
+                                  onClick={() => handleEditMemo(assessment.id)}
+                                >
+                                  <StickyNote className="w-3 h-3 text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0" />
+                                  <span className="text-[11px] sm:text-xs text-yellow-800 dark:text-yellow-300 leading-relaxed">
+                                    {memos[assessment.id]}
+                                  </span>
+                                </div>
+                              )}
+                              {/* 메모 편집 */}
+                              {editingMemoId === assessment.id && (
+                                <div className="mt-1.5 space-y-1.5">
+                                  <Textarea
+                                    value={memoText}
+                                    onChange={(e) => setMemoText(e.target.value)}
+                                    placeholder="개인 메모를 입력하세요 (예: 프린트 가져가기, USB 준비)"
+                                    className="text-xs min-h-[60px] resize-none"
+                                    autoFocus
+                                  />
+                                  <div className="flex gap-1.5">
+                                    <Button
+                                      size="sm"
+                                      className="h-7 text-xs px-2"
+                                      onClick={() => handleSaveMemo(assessment.id)}
+                                    >
+                                      <Save className="w-3 h-3 mr-1" />
+                                      저장
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 text-xs px-2"
+                                      onClick={() => { setEditingMemoId(null); setMemoText(''); }}
+                                    >
+                                      취소
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
+                              {/* 메모 추가 버튼 */}
+                              {!memos[assessment.id] && editingMemoId !== assessment.id && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 text-[11px] px-1.5 text-muted-foreground mt-1"
+                                  onClick={() => handleEditMemo(assessment.id)}
+                                >
+                                  <StickyNote className="w-3 h-3 mr-1" />
+                                  메모 추가
+                                </Button>
+                              )}
                             </div>
                             {!today && (
-                              <div className="flex-shrink-0 bg-blue-50 text-blue-600 rounded-lg px-2 py-1 text-center min-w-[48px]">
+                              <div className="flex-shrink-0 bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 rounded-lg px-2 py-1 text-center min-w-[48px]">
                                 <span className="text-xs font-bold">D-{daysUntil}</span>
                               </div>
                             )}
@@ -508,15 +719,15 @@ export default function StudentCalendar() {
           </CardContent>
         </Card>
 
-        {/* 완료된 수행평가 (접이식) */}
+        {/* 완료된 수행평가 (접이식) - 필터 무관하게 항상 전체 표시 */}
         {completedAssessments.length > 0 && (
           <Collapsible open={completedOpen} onOpenChange={setCompletedOpen}>
-            <Card className="border-green-200 shadow-sm">
+            <Card className="border-green-200 dark:border-green-800 shadow-sm">
               <CollapsibleTrigger asChild>
-                <CardHeader className="px-3 py-3 sm:px-6 sm:py-4 cursor-pointer touch-manipulation active:bg-green-50/50 transition-colors rounded-t-lg">
+                <CardHeader className="px-3 py-3 sm:px-6 sm:py-4 cursor-pointer touch-manipulation active:bg-green-50/50 dark:active:bg-green-950/30 transition-colors rounded-t-lg">
                   <div className="flex items-center justify-between">
                     <div>
-                      <CardTitle className="flex items-center gap-2 text-base sm:text-lg text-green-700">
+                      <CardTitle className="flex items-center gap-2 text-base sm:text-lg text-green-700 dark:text-green-400">
                         <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
                         완료된 수행평가 ({completedAssessments.length}개)
                       </CardTitle>
@@ -525,7 +736,7 @@ export default function StudentCalendar() {
                       </CardDescription>
                     </div>
                     <ChevronDown
-                      className={`w-5 h-5 text-green-600 transition-transform duration-200 ${
+                      className={`w-5 h-5 text-green-600 dark:text-green-400 transition-transform duration-200 ${
                         completedOpen ? 'rotate-180' : ''
                       }`}
                     />
@@ -538,29 +749,37 @@ export default function StudentCalendar() {
                     {completedAssessments
                       .sort((a, b) => parseLocalDate(b.date).getTime() - parseLocalDate(a.date).getTime())
                       .map((assessment) => (
-                        <Card key={assessment.id} className="opacity-70 bg-green-50/30">
+                        <Card key={assessment.id} className="opacity-70 bg-green-50/30 dark:bg-green-950/20">
                           <CardContent className="p-3 sm:pt-5 sm:pb-4 sm:px-5">
                             <div className="flex items-center gap-1.5 flex-wrap mb-1">
                               <Badge
                                 variant="secondary"
-                                className="bg-green-100 text-green-700 text-[11px] sm:text-xs"
+                                className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 text-[11px] sm:text-xs"
                               >
                                 {assessment.subject}
                               </Badge>
-                              <span className="text-xs sm:text-sm font-medium text-gray-500 line-through">
+                              <span className="text-xs sm:text-sm font-medium text-muted-foreground line-through">
                                 {parseLocalDate(assessment.date).toLocaleDateString('ko-KR')}
                               </span>
                               <Badge
                                 variant="secondary"
-                                className="bg-green-100 text-green-700 border-green-300 text-[11px] sm:text-xs"
+                                className="bg-green-100 text-green-700 border-green-300 dark:bg-green-900 dark:text-green-300 dark:border-green-700 text-[11px] sm:text-xs"
                               >
                                 <CheckCircle2 className="w-3 h-3 mr-0.5" />
                                 완료
                               </Badge>
                             </div>
-                            <p className="text-xs sm:text-sm text-gray-500 leading-relaxed">
+                            <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
                               {assessment.description}
                             </p>
+                            {memos[assessment.id] && (
+                              <div className="mt-1.5 flex items-start gap-1.5 p-2 rounded-md bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800">
+                                <StickyNote className="w-3 h-3 text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0" />
+                                <span className="text-[11px] sm:text-xs text-yellow-800 dark:text-yellow-300">
+                                  {memos[assessment.id]}
+                                </span>
+                              </div>
+                            )}
                           </CardContent>
                         </Card>
                       ))}
@@ -571,9 +790,118 @@ export default function StudentCalendar() {
           </Collapsible>
         )}
 
-        {/* Bottom safe area for mobile */}
+        {/* Bottom safe area */}
         <div className="h-4 sm:h-0" />
       </div>
     </div>
+  );
+}
+
+// 수행평가 카드 컴포넌트 (선택된 날짜용)
+function AssessmentCard({
+  assessment,
+  past,
+  today,
+  memo,
+  isEditingMemo,
+  memoText,
+  onMemoTextChange,
+  onEditMemo,
+  onSaveMemo,
+  onCancelMemo,
+}: {
+  assessment: Assessment;
+  past: boolean;
+  today: boolean;
+  memo?: string;
+  isEditingMemo: boolean;
+  memoText: string;
+  onMemoTextChange: (text: string) => void;
+  onEditMemo: () => void;
+  onSaveMemo: () => void;
+  onCancelMemo: () => void;
+}) {
+  return (
+    <Card
+      className={`transition-colors ${
+        past
+          ? 'opacity-70 border-green-200 bg-green-50/50 dark:border-green-800 dark:bg-green-950/30'
+          : today
+            ? 'border-orange-200 bg-orange-50/50 dark:border-orange-800 dark:bg-orange-950/30'
+            : ''
+      }`}
+    >
+      <CardContent className="p-3 sm:pt-5 sm:pb-4 sm:px-5">
+        <div className="flex items-center gap-2 flex-wrap mb-1">
+          <Badge className="text-[11px] sm:text-xs">{assessment.subject}</Badge>
+          {past && (
+            <Badge
+              variant="secondary"
+              className="bg-green-100 text-green-700 border-green-300 dark:bg-green-900 dark:text-green-300 dark:border-green-700 text-[11px] sm:text-xs"
+            >
+              <CheckCircle2 className="w-3 h-3 mr-0.5" />
+              완료
+            </Badge>
+          )}
+          {today && (
+            <Badge
+              variant="secondary"
+              className="bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-900 dark:text-orange-300 dark:border-orange-700 text-[11px] sm:text-xs"
+            >
+              <Clock className="w-3 h-3 mr-0.5" />
+              오늘
+            </Badge>
+          )}
+        </div>
+        <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+          {assessment.description}
+        </p>
+        {/* 메모 표시 */}
+        {memo && !isEditingMemo && (
+          <div
+            className="mt-1.5 flex items-start gap-1.5 p-2 rounded-md bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 cursor-pointer"
+            onClick={onEditMemo}
+          >
+            <StickyNote className="w-3 h-3 text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0" />
+            <span className="text-[11px] sm:text-xs text-yellow-800 dark:text-yellow-300 leading-relaxed">
+              {memo}
+            </span>
+          </div>
+        )}
+        {/* 메모 편집 */}
+        {isEditingMemo && (
+          <div className="mt-1.5 space-y-1.5">
+            <Textarea
+              value={memoText}
+              onChange={(e) => onMemoTextChange(e.target.value)}
+              placeholder="개인 메모를 입력하세요 (예: 프린트 가져가기, USB 준비)"
+              className="text-xs min-h-[60px] resize-none"
+              autoFocus
+            />
+            <div className="flex gap-1.5">
+              <Button size="sm" className="h-7 text-xs px-2" onClick={onSaveMemo}>
+                <Save className="w-3 h-3 mr-1" />
+                저장
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 text-xs px-2" onClick={onCancelMemo}>
+                취소
+              </Button>
+            </div>
+          </div>
+        )}
+        {/* 메모 추가 버튼 */}
+        {!memo && !isEditingMemo && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 text-[11px] px-1.5 text-muted-foreground mt-1"
+            onClick={onEditMemo}
+          >
+            <StickyNote className="w-3 h-3 mr-1" />
+            메모 추가
+          </Button>
+        )}
+      </CardContent>
+    </Card>
   );
 }

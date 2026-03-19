@@ -100,44 +100,35 @@
   }
 }
 
-/* 캘린더 수행평가 날짜 동그라미 표시 */
-@layer components {
-  /* 예정된 수행평가 - 파란색 동그라미 + 파란색 텍스트 */
-  .calendar-upcoming .rdp-day_button {
-    position: relative;
-    color: #2563eb;
-    font-weight: 700;
-  }
+/* 캘린더 수행평가 날짜 스타일 */
+/* 
+  react-day-picker v9: modifiersClassNames 클래스는 <td> 요소에 적용됨.
+  calendar.tsx에서 day_button classNames를 커스텀 오버라이드하므로 
+  rdp-day_button 클래스가 실제 DOM에 없음.
+  따라서 td > button 선택자를 사용해야 함.
+*/
 
-  .calendar-upcoming .rdp-day_button::after {
-    content: '';
-    position: absolute;
-    bottom: 2px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background-color: #3b82f6;
-  }
+/* 예정된 수행평가 - 파란색 굵은 숫자 */
+td.calendar-upcoming > button {
+  color: #2563eb !important;
+  font-weight: 700 !important;
+}
 
-  /* 완료된 수행평가 - 초록색 동그라미 + 초록색 텍스트 + 취소선 */
-  .calendar-completed .rdp-day_button {
-    position: relative;
-    color: #16a34a;
-    font-weight: 700;
-    text-decoration: line-through;
-  }
+/* 완료된 수행평가 - 초록색 굵은 숫자 + 가로 취소선 */
+td.calendar-completed > button {
+  color: #16a34a !important;
+  font-weight: 700 !important;
+  text-decoration: line-through !important;
+  text-decoration-color: #16a34a !important;
+  text-decoration-thickness: 2px !important;
+}
 
-  .calendar-completed .rdp-day_button::after {
-    content: '';
-    position: absolute;
-    bottom: 2px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background-color: #22c55e;
-  }
+/* 다크모드에서도 잘 보이도록 */
+.dark td.calendar-upcoming > button {
+  color: #60a5fa !important;
+}
+
+.dark td.calendar-completed > button {
+  color: #4ade80 !important;
+  text-decoration-color: #4ade80 !important;
 }
